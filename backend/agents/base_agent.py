@@ -1,6 +1,6 @@
 """
 Base Agent — shared logic for all GuitarLab agents.
-Uses Google Gemini API for AI generation.
+Uses the Google Gemini API for AI generation.
 """
 from __future__ import annotations
 
