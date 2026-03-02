@@ -1,0 +1,75 @@
+{
+  "org_name": "BlueFalconInk LLC",
+  "version": "2.0.0",
+  "styling": {
+    "theme": "dark",
+    "primary_color": "#1E40AF",
+    "secondary_color": "#BFDBFE",
+    "font_family": "Inter, sans-serif",
+    "layout_engine": "elk"
+  },
+  "technical_constraints": {
+    "preferred_cloud": "Local / Self-Hosted",
+    "iac_tool": "None",
+    "container_orchestration": "None",
+    "database_defaults": ["In-memory sessions", "JSON knowledge base"],
+    "api_standard": "REST"
+  },
+  "diagram_rules": {
+    "show_data_flow": true,
+    "include_security_layer": true,
+    "group_by": "domain",
+    "output_format": "mermaid",
+    "auto_link_documentation": true,
+    "cloud_cdn": false
+  },
+  "flagships": {
+    "GuitarLab": {
+      "domain": "Music/Education",
+      "description": "Falconverse plugin for guitar setup guidance — two AI agents (Master Luthier, Tone Guru) with RAG knowledge base and image uploads"
+    }
+  },
+  "branding": {
+    "org_name": "BlueFalconInk LLC",
+    "flagship_tool": "Architect AI Pro",
+    "live_app_url": "https://architect-ai-pro-mobile-edition-484078543321.us-west1.run.app/",
+    "github_action_repo": "https://github.com/koreric75/ArchitectAIPro_GHActions",
+    "primary_color": "#1E40AF",
+    "secondary_color": "#BFDBFE",
+    "accent_color": "#3B82F6",
+    "dark_bg": "#0F172A",
+    "tagline": "Automated Governance. Living Blueprints. Ruthless Consistency.",
+    "copyright": "© BlueFalconInk LLC. All rights reserved."
+  },
+  "compliance": {
+    "require_security_subgraph": true,
+    "require_branding": true,
+    "require_tool_attribution": true,
+    "require_brand_colors": true,
+    "block_non_standard_providers": false,
+    "require_cloud_armor_for_public": false,
+    "pci_compliance_for_payments": false
+  },
+  "secrets_policy": {
+    "source": "environment_variables",
+    "never_commit": true,
+    "allowed_stores": ["GitHub Actions Secrets", ".env files (gitignored)"],
+    "rotation_cadence_days": 90,
+    "audit_on_push": true
+  },
+  "project_context": {
+    "name": "GuitarLab",
+    "type": "Falconverse Plugin — Local Development MVP",
+    "backend": "Python 3.13 + FastAPI 0.115.6 + uvicorn on port 8001",
+    "frontend": "React 19 + Vite 6.4.1 + Tailwind CSS 3.4.17 on port 3000",
+    "ai": "Google Gemini 2.5 Flash via google-generativeai SDK",
+    "agents": [
+      "Master Luthier — Sacred Order guitar setup guidance",
+      "Tone Guru — Electronics, pickups, amp troubleshooting"
+    ],
+    "rag": "Keyword-based RAG from electronics_knowledge_base.json (12 docs)",
+    "sessions": "In-memory Python dict (no database)",
+    "deployment": "Local only — no cloud, no containers, no Terraform",
+    "notes": "This is a local MVP. Do NOT invent cloud services, databases, or infrastructure that does not exist in the source code."
+  }
+}

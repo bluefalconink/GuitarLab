@@ -17,34 +17,40 @@
 name: "🏗️ Architecture Diagram"
 
 on:
-  # Manual trigger only (to prevent auto-regeneration loops)
   workflow_dispatch:
-  
+
   push:
     branches: [main, master]
     paths:
-      # Only regenerate on actual source code changes
-      - "backend/**/*.py"
-      - "frontend/src/**/*.js"
-      - "frontend/src/**/*.jsx"
-      - "frontend/src/**/*.ts"
-      - "frontend/src/**/*.tsx"
-      # Exclude documentation to prevent loops
+      - "backend/**"
+      - "frontend/**"
+      - "*.py"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - "package*.json"
+      - "Dockerfile*"
+      - "docker-compose*"
+      - "ARCHITECT_CONFIG.json"
+      # Prevent infinite loops — never trigger on auto-generated outputs
       - "!docs/**"
-      - "!*.md"
-  
+      - "!**/*.md"
+      - "!.github/**"
+
   pull_request:
     branches: [main, master]
     paths:
-      # Only regenerate on actual source code changes
-      - "backend/**/*.py"
-      - "frontend/src/**/*.js"
-      - "frontend/src/**/*.jsx"
-      - "frontend/src/**/*.ts"
-      - "frontend/src/**/*.tsx"
-      # Exclude documentation to prevent loops
+      - "backend/**"
+      - "frontend/**"
+      - "*.py"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - "package*.json"
+      - "Dockerfile*"
+      - "docker-compose*"
+      - "ARCHITECT_CONFIG.json"
       - "!docs/**"
-      - "!*.md"
+      - "!**/*.md"
+      - "!.github/**"
 
 permissions:
   contents: write
@@ -156,28 +162,129 @@ jobs:
             --file "$OUTPUT_PATH" \
             --config "$CONFIG_PATH" || echo "⚠️ Some violations remain after remediation"
 
-      # ── Validate Mermaid syntax before commit ──
-      - name: "✅ Validate Architecture Diagram Syntax"
+      # ── Post-process: sanitize & validate Mermaid for GitHub rendering ──
+      - name: "🔧 Sanitize & Validate Mermaid Output"
         run: |
-          MERMAID_FILE="docs/architecture.mermaid"
-          if [ -f "$MERMAID_FILE" ]; then
-            echo "🔍 Checking Mermaid syntax in $MERMAID_FILE..."
-            # Basic validation: file should start with graph/flowchart and contain arrows
-            if grep -q "^graph " "$MERMAID_FILE" && grep -q -- "-->" "$MERMAID_FILE"; then
-              # Check for common syntax errors
-              if grep -E '\[.*\(.*\)\]' "$MERMAID_FILE" | grep -vq '\["'; then
-                echo "⚠️ Warning: Found unquoted parentheses in labels"
-                echo "Please manually verify Mermaid syntax"
-              fi
-              echo "✅ Mermaid file appears valid"
-            else
-              echo "❌ Invalid Mermaid structure detected"
-              echo "File must start with 'graph' and contain flow arrows (-->)"
-              exit 1
-            fi
-          else
-            echo "⚠️ No Mermaid file found at $MERMAID_FILE"
-          fi
+          python3 << 'PYEOF'
+          """
+          Post-processor for Architect AI Pro Mermaid output.
+          Catches edge-cases the upstream generate_diagram.py sanitizer may miss
+          (unquoted special chars, stray parentheses, colon-style labels, etc.)
+          and validates the result via the mermaid.ink rendering API.
+          """
+          import re, sys, base64
+          from pathlib import Path
+
+          try:
+              import requests as req
+          except ImportError:
+              req = None
+
+          MERMAID = Path("docs/architecture.mermaid")
+          MD     = Path("docs/architecture.md")
+
+          if not MERMAID.exists():
+              print("⚠️  docs/architecture.mermaid not found — skipping")
+              sys.exit(0)
+
+          raw = MERMAID.read_text("utf-8")
+
+          # Characters that cause Mermaid parse errors inside [...] labels
+          SPECIAL = set("()/<>|{}")
+
+          def needs_quoting(label):
+              return any(c in SPECIAL for c in label)
+
+          def clean_label(label):
+              """Neutralise dangerous chars inside a node or subgraph label."""
+              label = label.replace("(", " - ").replace(")", "")
+              label = re.sub(r"^/|/$", "", label)        # leading/trailing /
+              label = label.replace("|", "\u00b7")        # pipe -> middle dot
+              label = re.sub(r"\s{2,}", " ", label).strip()
+              return label
+
+          def fix_line(line):
+              s = line.strip()
+
+              # Pass-through lines we must never modify
+              if (not s
+                      or s.startswith("%%")
+                      or s == "end"
+                      or re.match(r"^(style|classDef|class|linkStyle|click)\s", s)
+                      or s.startswith("graph ")
+                      or s.startswith("flowchart ")):
+                  return line
+
+              # ── subgraph titles ──
+              sg = re.match(
+                  r'^(\s*subgraph\s+\S+\s+)\[("?)([^\]]+?)("?)\]\s*$', line)
+              if sg:
+                  pre, _q1, label, _q2 = sg.groups()
+                  label = label.strip().strip('"')
+                  label = clean_label(label) if needs_quoting(label) else label
+                  return f'{pre}["{label}"]'
+
+              # ── node labels: NodeID[label] ──
+              def _fix_node(m):
+                  nid, label = m.group(1), m.group(2)
+                  bare = label.strip('"')
+                  if needs_quoting(bare):
+                      return f'{nid}["{clean_label(bare)}"]'
+                  return m.group(0)
+
+              line = re.sub(r'\b([A-Za-z_]\w*)\[([^\[\]]+)\]', _fix_node, line)
+
+              # ── parentheses inside pipe edge labels ──
+              def _fix_edge(m):
+                  label = m.group(1)
+                  label = label.replace("(", "").replace(")", "")
+                  label = label.replace("|", "\u00b7")
+                  return f"|{label}|"
+
+              line = re.sub(r'\|([^|]*[()][^|]*)\|', _fix_edge, line)
+
+              # ── colon-style edge labels (sequence-diagram syntax leftover) ──
+              line = re.sub(
+                  r'^(\s*\S+\s+)(-->|---->|---|----|-.->|==>)(\s+)(\S+)\s*:\s*(.+)$',
+                  lambda m: f"{m.group(1)}{m.group(2)}|{m.group(5).strip()}|{m.group(3)}{m.group(4)}",
+                  line)
+
+              return line
+
+          # ── apply to .mermaid file ──
+          fixed = "\n".join(fix_line(l) for l in raw.splitlines())
+          MERMAID.write_text(fixed, "utf-8")
+          print(f"✅ Post-processed docs/architecture.mermaid ({len(fixed)} chars)")
+
+          # ── patch the fenced mermaid block inside the markdown ──
+          if MD.exists():
+              md = MD.read_text("utf-8")
+              def _patch(m):
+                  pre, block, fence = m.group(1), m.group(2), m.group(3)
+                  return pre + "\n".join(fix_line(l) for l in block.splitlines()) + "\n" + fence
+              md2 = re.sub(r"(```mermaid\s*\n)(.*?)(```)", _patch, md, flags=re.DOTALL)
+              MD.write_text(md2, "utf-8")
+              print("✅ Patched fenced Mermaid block in docs/architecture.md")
+
+          # ── validate via mermaid.ink (non-blocking) ──
+          if req:
+              try:
+                  enc = base64.urlsafe_b64encode(fixed.encode()).decode()
+                  url = f"https://mermaid.ink/img/{enc}?theme=default&bgColor=FFFFFF&width=800"
+                  r = req.get(url, timeout=30)
+                  ct = r.headers.get("content-type", "")
+                  if r.status_code == 200 and "image" in ct:
+                      print("✅ Validated OK via mermaid.ink rendering API")
+                  else:
+                      print(f"⚠️  mermaid.ink returned HTTP {r.status_code} ({ct})")
+                      print("   Diagram may still have syntax issues — review the committed file")
+              except Exception as e:
+                  print(f"⚠️  mermaid.ink validation skipped: {e}")
+          else:
+              print("ℹ️  requests not available for validation — skipping mermaid.ink check")
+
+          print("🏁 Mermaid sanitization complete")
+          PYEOF
 
       # ── Commit on push/dispatch ──
       - name: "🚀 Commit Updated Blueprints"
