@@ -1,49 +1,50 @@
-%% GuitarLab architecture (current implementation)
+%% GuitarLab architecture - current local implementation
 graph TD
-    subgraph Client[Client]
-        User[User]
-        Browser[Browser]
+    subgraph Client["👤 Client"]
+        User["User"]
+        Browser["Browser"]
     end
 
-    subgraph Frontend[Frontend]
-        ReactApp[React + Vite UI]
-        ViteProxy[Vite /api proxy]
+    subgraph Frontend["Frontend Layer"]
+        ReactApp["React + Vite UI"]
+        ViteProxy["Vite Proxy → /api"]
     end
 
-    subgraph Backend[Backend (FastAPI)]
-        ChatRoute[/POST /api/chat/]
-        UploadRoute[/POST /api/upload/]
-        AdvanceRoute[/POST /api/chat/advance-step/]
-        AgentRouter[Agent Router]
-        Luthier[Master Luthier Agent]
-        ToneGuru[Tone Guru Agent]
-        Sessions[(In-memory sessions)]
+    subgraph Backend["Backend - FastAPI"]
+        ChatRoute["POST /api/chat"]
+        UploadRoute["POST /api/upload"]
+        AdvanceRoute["POST /api/chat/advance-step"]
+        AgentRouter["Agent Router"]
+        Luthier["Master Luthier"]
+        ToneGuru["Tone Guru"]
+        Sessions[("In-memory Sessions")]
     end
 
-    subgraph KnowledgeAndAI[Knowledge + AI]
-        KB[(electronics_knowledge_base.json)]
-        Uploads[(backend/uploads)]
-        Gemini[Google Gemini API]
+    subgraph Knowledge["Knowledge + AI"]
+        KB[("electronics_knowledge_base.json")]
+        Uploads[("backend/uploads")]
+        Gemini["Google Gemini API"]
     end
 
-    User --> Browser
-    Browser --> ReactApp
-    ReactApp --> ViteProxy
-    ViteProxy --> ChatRoute
-    ViteProxy --> UploadRoute
-    ViteProxy --> AdvanceRoute
+    User -->|HTTP| Browser
+    Browser -->|React App| ReactApp
+    ReactApp -->|/api proxy| ViteProxy
+    
+    ViteProxy -->|chat| ChatRoute
+    ViteProxy -->|upload| UploadRoute
+    ViteProxy -->|advance| AdvanceRoute
 
-    ChatRoute --> AgentRouter
-    AgentRouter --> Luthier
-    AgentRouter --> ToneGuru
+    ChatRoute -->|route| AgentRouter
+    UploadRoute -->|store| Uploads
+    
+    AgentRouter -->|Luthier path| Luthier
+    AgentRouter -->|Tone path| ToneGuru
 
-    Luthier --> Sessions
-    ToneGuru --> Sessions
+    Luthier -->|state| Sessions
+    ToneGuru -->|state| Sessions
 
-    Luthier --> KB
-    ToneGuru --> KB
+    Luthier -->|search| KB
+    ToneGuru -->|search| KB
 
-    Luthier --> Gemini
-    ToneGuru --> Gemini
-
-    UploadRoute --> Uploads
+    Luthier -->|prompt| Gemini
+    ToneGuru -->|prompt| Gemini
