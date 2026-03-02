@@ -17,35 +17,34 @@
 name: "🏗️ Architecture Diagram"
 
 on:
+  # Manual trigger only (to prevent auto-regeneration loops)
+  workflow_dispatch:
+  
   push:
     branches: [main, master]
     paths:
-      - "src/**"
-      - "server/**"
-      - "services/**"
-      - "components/**"
-      - "**/*.ts"
-      - "**/*.tsx"
-      - "**/*.py"
-      - "**/*.js"
-      - "Dockerfile"
-      - "docker-compose*.yml"
-      - "terraform/**"
+      # Only regenerate on actual source code changes
+      - "backend/**/*.py"
+      - "frontend/src/**/*.js"
+      - "frontend/src/**/*.jsx"
+      - "frontend/src/**/*.ts"
+      - "frontend/src/**/*.tsx"
+      # Exclude documentation to prevent loops
+      - "!docs/**"
+      - "!*.md"
+  
   pull_request:
     branches: [main, master]
     paths:
-      - "src/**"
-      - "server/**"
-      - "services/**"
-      - "components/**"
-      - "**/*.ts"
-      - "**/*.tsx"
-      - "**/*.py"
-      - "**/*.js"
-      - "Dockerfile"
-      - "docker-compose*.yml"
-      - "terraform/**"
-  workflow_dispatch:
+      # Only regenerate on actual source code changes
+      - "backend/**/*.py"
+      - "frontend/src/**/*.js"
+      - "frontend/src/**/*.jsx"
+      - "frontend/src/**/*.ts"
+      - "frontend/src/**/*.tsx"
+      # Exclude documentation to prevent loops
+      - "!docs/**"
+      - "!*.md"
 
 permissions:
   contents: write
@@ -156,6 +155,29 @@ jobs:
           python .github/scripts/foreman_audit.py \
             --file "$OUTPUT_PATH" \
             --config "$CONFIG_PATH" || echo "⚠️ Some violations remain after remediation"
+
+      # ── Validate Mermaid syntax before commit ──
+      - name: "✅ Validate Architecture Diagram Syntax"
+        run: |
+          MERMAID_FILE="docs/architecture.mermaid"
+          if [ -f "$MERMAID_FILE" ]; then
+            echo "🔍 Checking Mermaid syntax in $MERMAID_FILE..."
+            # Basic validation: file should start with graph/flowchart and contain arrows
+            if grep -q "^graph " "$MERMAID_FILE" && grep -q -- "-->" "$MERMAID_FILE"; then
+              # Check for common syntax errors
+              if grep -E '\[.*\(.*\)\]' "$MERMAID_FILE" | grep -vq '\["'; then
+                echo "⚠️ Warning: Found unquoted parentheses in labels"
+                echo "Please manually verify Mermaid syntax"
+              fi
+              echo "✅ Mermaid file appears valid"
+            else
+              echo "❌ Invalid Mermaid structure detected"
+              echo "File must start with 'graph' and contain flow arrows (-->)"
+              exit 1
+            fi
+          else
+            echo "⚠️ No Mermaid file found at $MERMAID_FILE"
+          fi
 
       # ── Commit on push/dispatch ──
       - name: "🚀 Commit Updated Blueprints"
