@@ -1,0 +1,248 @@
+# ──────────────────────────────────────────────────────────────────────
+# 🏗️ Architecture Diagram Generator — Self-Contained Workflow
+#
+# Powered by Architect AI Pro — BlueFalconInk LLC
+# https://architect-ai-pro-mobile-edition-484078543321.us-west1.run.app/
+#
+# Deploy this to any BlueFalconInk repo at:
+#   .github/workflows/architecture.yml
+#
+# Required secrets:
+#   GEMINI_API_KEY — Set in repo Settings → Secrets → Actions
+#
+# This workflow downloads scripts from ArchitectAIPro_GHActions and
+# runs them directly (no reusable workflow_call needed).
+# ──────────────────────────────────────────────────────────────────────
+
+name: "🏗️ Architecture Diagram"
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "server/**"
+      - "services/**"
+      - "components/**"
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.py"
+      - "**/*.js"
+      - "Dockerfile"
+      - "docker-compose*.yml"
+      - "terraform/**"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "server/**"
+      - "services/**"
+      - "components/**"
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.py"
+      - "**/*.js"
+      - "Dockerfile"
+      - "docker-compose*.yml"
+      - "terraform/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate-diagram:
+    name: "🤖 Generate Architecture Diagram"
+    runs-on: ubuntu-latest
+
+    env:
+      CONFIG_PATH: "ARCHITECT_CONFIG.json"
+      OUTPUT_PATH: "docs/architecture.md"
+      SCAN_DIR: "."
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f  # v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Install Draw.io CLI
+        run: |
+          wget -q https://github.com/jgraph/drawio-desktop/releases/download/v24.7.17/drawio-amd64-24.7.17.deb -O /tmp/drawio.deb
+          sudo dpkg -i /tmp/drawio.deb || sudo apt-get install -f -y
+          sudo apt-get install -y xvfb
+
+      # ── Download Architect AI Pro scripts ──
+      - name: Fetch Architect AI Pro Scripts
+        run: |
+          SCRIPT_DIR=".github/scripts"
+          GH_RAW="https://raw.githubusercontent.com/koreric75/ArchitectAIPro_GHActions/main"
+
+          mkdir -p "$SCRIPT_DIR"
+
+          for script in generate_diagram.py foreman_audit.py safety_check.py production_readiness.py; do
+            echo "📥 Downloading $script..."
+            curl -sL "$GH_RAW/.github/scripts/$script" -o "$SCRIPT_DIR/$script" || true
+          done
+
+          # Ensure config exists
+          if [ ! -f "$CONFIG_PATH" ]; then
+            echo "📥 Downloading default ARCHITECT_CONFIG.json..."
+            curl -sL "$GH_RAW/ARCHITECT_CONFIG.json" -o "$CONFIG_PATH"
+          fi
+
+      # ── Generate the diagram ──
+      - name: "🤖 Generate Diagram via Gemini API"
+        id: generate
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python .github/scripts/generate_diagram.py \
+            --config "$CONFIG_PATH" \
+            --output "$OUTPUT_PATH" \
+            --scan-dir "$SCAN_DIR" \
+            --repo-name "${{ github.event.repository.name }}"
+
+          if [ -f "$OUTPUT_PATH" ]; then
+            echo "✅ Architecture document generated"
+          else
+            echo "❌ Output file not created"
+            exit 1
+          fi
+
+      # ── Foreman compliance audit ──
+      - name: "🛡️ Foreman Compliance Audit"
+        id: audit
+        run: |
+          set +e
+          python .github/scripts/foreman_audit.py \
+            --file "$OUTPUT_PATH" \
+            --config "$CONFIG_PATH" \
+            2>&1 | tee foreman_report.txt
+          AUDIT_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$AUDIT_EXIT" -eq 0 ]; then
+            echo "audit_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "audit_passed=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Foreman found violations — attempting remediation..."
+          fi
+
+      # ── Auto-remediate if audit failed ──
+      - name: "🔧 Auto-Remediate Violations"
+        if: steps.audit.outputs.audit_passed == 'false'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "🔧 Calling Gemini for remediation..."
+          python .github/scripts/generate_diagram.py \
+            --config "$CONFIG_PATH" \
+            --output "$OUTPUT_PATH" \
+            --scan-dir "$SCAN_DIR" \
+            --repo-name "${{ github.event.repository.name }}" \
+            --remediate foreman_report.txt
+
+          echo "🔍 Re-running Foreman audit..."
+          python .github/scripts/foreman_audit.py \
+            --file "$OUTPUT_PATH" \
+            --config "$CONFIG_PATH" || echo "⚠️ Some violations remain after remediation"
+
+      # ── Commit on push/dispatch ──
+      - name: "🚀 Commit Updated Blueprints"
+        if: github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/architecture.md docs/architecture.mermaid docs/architecture.drawio || true
+          git add -f docs/architecture.png 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: auto-update architecture diagram via Architect AI Pro [skip ci]"
+            # Pull with theirs-strategy to resolve conflicts on auto-generated files
+            if ! git pull --rebase -X theirs origin "${{ github.ref_name }}"; then
+              echo "⚠️ Rebase conflict — aborting rebase and force-pushing"
+              git rebase --abort 2>/dev/null || true
+              git push --force-with-lease || git push
+            else
+              git push
+            fi
+          fi
+
+      # ── Comment on PR ──
+      - name: "💬 PR Diagram Preview"
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diagram = fs.readFileSync(process.env.OUTPUT_PATH, 'utf8');
+            const body = [
+              '## 🏗️ Architecture Diagram Preview',
+              '',
+              '> Auto-generated by **Architect AI Pro** for **BlueFalconInk LLC**',
+              '',
+              diagram,
+              '',
+              '---',
+              '_Merge to commit this diagram to `docs/architecture.md`._'
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Architecture Diagram Preview')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                comment_id: existing.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            }
+        env:
+          OUTPUT_PATH: ${{ env.OUTPUT_PATH }}
+
+      # ── Upload artifact ──
+      - name: "📦 Upload Diagram Artifact"
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4
+        with:
+          name: architecture-diagram
+          path: |
+            ${{ env.OUTPUT_PATH }}
+            docs/*.mermaid
+            docs/*.drawio
+            docs/*.png
+          retention-days: 30
+
+      - name: "✅ Final Status"
+        if: always()
+        run: |
+          echo "╔══════════════════════════════════════════════════════╗"
+          echo "║  Architect AI Pro — BlueFalconInk LLC                ║"
+          echo "║  Diagram: ${{ env.OUTPUT_PATH }}"
+          echo "║  Audit:   ${{ steps.audit.outputs.audit_passed }}"
+          echo "╚══════════════════════════════════════════════════════╝"
